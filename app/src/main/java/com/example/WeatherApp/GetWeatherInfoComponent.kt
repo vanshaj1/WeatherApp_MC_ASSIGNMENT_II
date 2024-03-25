@@ -1,5 +1,8 @@
 package com.example.WeatherApp
 
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Build
 import android.util.Log
 import android.widget.Toast
@@ -32,6 +35,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -62,10 +66,11 @@ import java.util.Date
 
 lateinit var currWeatherApi: weatherApi
 lateinit var histWeatherApi: HistoryWeatherApi
+lateinit var weatherDB: weatherDatabase
 //Citation:- https://medium.com/mobile-app-development-publication/date-and-time-picker-with-compose-9cadc4f50e6d
 @OptIn(ExperimentalMaterial3Api::class, DelicateCoroutinesApi::class)
 @Composable
-fun GetWeatherInfoComponent(modifier: Modifier){
+fun GetWeatherInfoComponent(modifier: Modifier, context: Context){
     val context = LocalContext.current
     val state = rememberDatePickerState()
     var makeVisible = remember{ mutableStateOf(false) }
@@ -82,9 +87,13 @@ fun GetWeatherInfoComponent(modifier: Modifier){
     var animationVisibility = remember {
         MutableTransitionState(false).apply { targetState = false }
     }
+    var WarningAnimationVisibility = remember {
+        MutableTransitionState(false).apply { targetState = false }
+    }
 
     currWeatherApi = RetrofitInt.getInstance("https://api.open-meteo.com").create(weatherApi::class.java)
     histWeatherApi = RetrofitInt.getInstance("https://archive-api.open-meteo.com").create(HistoryWeatherApi::class.java)
+    weatherDB = weatherDatabase.getDbInstance(context)
 
     Column (
         modifier
@@ -95,25 +104,39 @@ fun GetWeatherInfoComponent(modifier: Modifier){
         horizontalAlignment = Alignment.CenterHorizontally
     ){
         //    citation:- https://stackoverflow.com/a/68640459
-            AnimatedVisibility(visibleState = animationVisibility,
-                enter = fadeIn(
-                    animationSpec = tween(durationMillis = 2000)
-                ),
-                exit = fadeOut(
-                    animationSpec = tween(durationMillis = 2000)
-                )) {
-                   Text(text = "Minimum temperature is :- ${minimumTemperature.value} \n Maximum temperature is :- ${maximumTemperature.value}"
-                    ,style= TextStyle(
-                        background = Color(android.graphics.Color.parseColor("#A92EF5")),
-                            color = Color.White
-                    )
-                    )
-            }
+        AnimatedVisibility(visibleState = animationVisibility,
+            enter = fadeIn(
+                animationSpec = tween(durationMillis = 2000)
+            ),
+            exit = fadeOut(
+                animationSpec = tween(durationMillis = 2000)
+            )) {
+            Text(text = "Minimum temperature is :- ${minimumTemperature.value} \n Maximum temperature is :- ${maximumTemperature.value}"
+                ,style= TextStyle(
+                    background = Color(android.graphics.Color.parseColor("#A92EF5")),
+                    color = Color.White
+                )
+            )
+        }
+        AnimatedVisibility(visibleState = WarningAnimationVisibility,
+            enter = fadeIn(
+                animationSpec = tween(durationMillis = 2000)
+            ),
+            exit = fadeOut(
+                animationSpec = tween(durationMillis = 2000)
+            )) {
+            Text(text = "Data Not availabel offline"
+                ,style= TextStyle(
+                    background = Color(android.graphics.Color.parseColor("#A92EF5")),
+                    color = Color.Red
+                )
+            )
+        }
 
 
         if(makeVisible.value == true){
             DatePickerDialog(onDismissRequest = {
-                   makeVisible.value = false                                     
+                makeVisible.value = false
             }, confirmButton = {
                 Button(onClick = {
                     makeVisible.value = false
@@ -124,7 +147,7 @@ fun GetWeatherInfoComponent(modifier: Modifier){
                 Button(onClick = {
                     makeVisible.value = false
                 }) {
-                    Text(text = "Cancel")                    
+                    Text(text = "Cancel")
                 }
             }
             ) {
@@ -134,6 +157,7 @@ fun GetWeatherInfoComponent(modifier: Modifier){
         TextButton(onClick = {
             makeVisible.value = true
             animationVisibility.targetState = false
+            WarningAnimationVisibility.targetState = false
         },
             border = BorderStroke(2.dp, Color.Blue),
             shape = RoundedCornerShape(0),
@@ -145,8 +169,8 @@ fun GetWeatherInfoComponent(modifier: Modifier){
             },
                 modifier = modifier.padding(end = 8.dp))
             Icon(
-               Icons.Rounded.DateRange,
-               contentDescription = ""
+                Icons.Rounded.DateRange,
+                contentDescription = ""
             )
         }
         Button(onClick = {
@@ -165,109 +189,199 @@ fun GetWeatherInfoComponent(modifier: Modifier){
                     "We cannot show weather status for this year",
                     Toast.LENGTH_SHORT
                 ).show()
-            }
+            }else {
 
-            if(currYear == askedYear){
-                if(currMonth < askedMonth || (currMonth == askedMonth && currDay < askedDay)){
+                var isNetworkAvailable = checkNetworkConnectivity(context)
+
+//                loadDataFromDatabase(date)
+                if (isNetworkAvailable == false) {
+                    var memory:WeatherInfo? = null
                     GlobalScope.launch {
-                        var minTempList = mutableListOf<Double>()
-                        var maxTempList = mutableListOf<Double>()
-                        var isdone = true
-                        for(i in 1..10){
-                            val result = async {
-                                histWeatherApi.getWeatherStatus(28.6519,77.2315,"temperature_2m_max","temperature_2m_min",(currYear - i).toString() + date.substring(4),(currYear - i).toString() + date.substring(4))
-                            }.await()
-                            Log.d("tatty",result.body()?.daily?.temperature_2m_min?.get(0).toString())
-                            if(result.isSuccessful){
-                                result.body()?.daily?.temperature_2m_min?.get(0)
-                                    ?.let { minTempList.add(it) }
-                                result.body()?.daily?.temperature_2m_max?.get(0)
-                                    ?.let { maxTempList.add(it) }
-                            }else{
-                                isdone = false
-                            }
-                        }
-                        if(isdone == true){
-                            minimumTemperature.value = minTempList.average().toString()
-                            maximumTemperature.value = maxTempList.average().toString()
-                            animationVisibility.targetState = true
+                        memory = async {
+                            weatherDB.weatherDao().getWeatherInfoByDate(date)
+                        }.await()
+                        if(memory == null){
+                            WarningAnimationVisibility.targetState = true
                         }else{
-                            Toast.makeText(
-                                context,
-                                "Some Error Occurred",
-                                Toast.LENGTH_SHORT
-                            ).show()
-                        }
-                    }
-                }else{
-                    GlobalScope.launch {
-                        val result = currWeatherApi.getWeatherStatus(28.6519,77.2315,"temperature_2m_max","temperature_2m_min",date,date)
-                        Log.d("HAG",result.body().toString())
-                        if(result.isSuccessful){
-                            minimumTemperature.value = result.body()?.daily?.temperature_2m_min?.get(0).toString()
-                            maximumTemperature.value = result.body()?.daily?.temperature_2m_max?.get(0).toString()
+                            Log.d("bsdk", "KAAM HO GAYA $isNetworkAvailable")
+                            minimumTemperature.value = memory!!.temperatureMin
+                            maximumTemperature.value = memory!!.temperatureMax
                             animationVisibility.targetState = true
                         }
                     }
-                }
-            }
-
-            if(askedYear < currYear){
-                GlobalScope.launch {
-                    val result = histWeatherApi.getWeatherStatus(28.6519,77.2315,"temperature_2m_max","temperature_2m_min",date,date)
-                    Log.d("HAG",result.body().toString())
-                    if(result.isSuccessful){
-                        minimumTemperature.value = result.body()?.daily?.temperature_2m_min?.get(0).toString()
-                        maximumTemperature.value = result.body()?.daily?.temperature_2m_max?.get(0).toString()
-                        animationVisibility.targetState = true
-                    }
-                }
-            }
-
-            if(currYear + 1 == askedYear){
-                if(currMonth < askedMonth || (currMonth == askedMonth && currDay < askedDay)){
-                    Toast.makeText(
-                        context,
-                        "Sorry we can't show you prediction about this date, try earlier ones",
-                        Toast.LENGTH_LONG
-                    ).show()
-                }else{
-                    GlobalScope.launch {
-                        var minTempList = mutableListOf<Double>()
-                        var maxTempList = mutableListOf<Double>()
-                        var isdone = true
-                        for(i in 0..9){
-                            val result = async {
-                                if(i == 0 && (askedDay <= currDay && askedDay >= currDay - 5) && currMonth == askedMonth){
-                                    currWeatherApi.getWeatherStatus(28.6519,77.2315,"temperature_2m_max","temperature_2m_min",(currYear - i).toString() + date.substring(4),(currYear - i).toString() + date.substring(4))
-                                }else{
-                                    histWeatherApi.getWeatherStatus(28.6519,77.2315,"temperature_2m_max","temperature_2m_min",(currYear - i).toString() + date.substring(4),(currYear - i).toString() + date.substring(4))
+                } else if (isNetworkAvailable == true) {
+                    if (currYear == askedYear) {
+                        if (currMonth < askedMonth || (currMonth == askedMonth && currDay < askedDay)) {
+                            GlobalScope.launch {
+                                var minTempList = mutableListOf<Double>()
+                                var maxTempList = mutableListOf<Double>()
+                                var isdone = true
+                                for (i in 1..10) {
+                                    val result = async {
+                                        histWeatherApi.getWeatherStatus(
+                                            28.6519,
+                                            77.2315,
+                                            "temperature_2m_max",
+                                            "temperature_2m_min",
+                                            (currYear - i).toString() + date.substring(4),
+                                            (currYear - i).toString() + date.substring(4)
+                                        )
+                                    }.await()
+                                    Log.d(
+                                        "tatty",
+                                        result.body()?.daily?.temperature_2m_min?.get(0)
+                                            .toString()
+                                    )
+                                    if (result.isSuccessful) {
+                                        result.body()?.daily?.temperature_2m_min?.get(0)
+                                            ?.let { minTempList.add(it) }
+                                        result.body()?.daily?.temperature_2m_max?.get(0)
+                                            ?.let { maxTempList.add(it) }
+                                    } else {
+                                        isdone = false
+                                    }
                                 }
-                            }.await()
-                            Log.d("tatty",result.body()?.daily?.temperature_2m_min?.get(0).toString())
-                            if(result.isSuccessful){
-                                result.body()?.daily?.temperature_2m_min?.get(0)
-                                    ?.let { minTempList.add(it) }
-                                result.body()?.daily?.temperature_2m_max?.get(0)
-                                    ?.let { maxTempList.add(it) }
-                            }else{
-                                isdone = false
+                                if (isdone == true) {
+                                    minimumTemperature.value = minTempList.average().toString()
+                                    maximumTemperature.value = maxTempList.average().toString()
+                                    animationVisibility.targetState = true
+                                    SaveToDatabase(
+                                        date,
+                                        minimumTemperature.value,
+                                        maximumTemperature.value
+                                    )
+                                } else {
+                                    Toast.makeText(
+                                        context,
+                                        "Some Error Occurred",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            }
+                        } else {
+                            GlobalScope.launch {
+                                val result = currWeatherApi.getWeatherStatus(
+                                    28.6519,
+                                    77.2315,
+                                    "temperature_2m_max",
+                                    "temperature_2m_min",
+                                    date,
+                                    date
+                                )
+                                Log.d("HAG", result.body().toString())
+                                if (result.isSuccessful) {
+                                    minimumTemperature.value =
+                                        result.body()?.daily?.temperature_2m_min?.get(0)
+                                            .toString()
+                                    maximumTemperature.value =
+                                        result.body()?.daily?.temperature_2m_max?.get(0)
+                                            .toString()
+                                    animationVisibility.targetState = true
+                                    SaveToDatabase(
+                                        date,
+                                        minimumTemperature.value,
+                                        maximumTemperature.value
+                                    )
+                                }
                             }
                         }
-                        if(isdone == true){
-                            minimumTemperature.value = minTempList.average().toString()
-                            maximumTemperature.value = maxTempList.average().toString()
-                            animationVisibility.targetState = true
-                        }else{
-                            Toast.makeText(
-                                context,
-                                "Some Error Occurred",
-                                Toast.LENGTH_SHORT
-                            ).show()
+                    }
+
+                    if (askedYear < currYear) {
+                        GlobalScope.launch {
+                            val result = histWeatherApi.getWeatherStatus(
+                                28.6519,
+                                77.2315,
+                                "temperature_2m_max",
+                                "temperature_2m_min",
+                                date,
+                                date
+                            )
+                            Log.d("HAG", result.body().toString())
+                            if (result.isSuccessful) {
+                                minimumTemperature.value =
+                                    result.body()?.daily?.temperature_2m_min?.get(0).toString()
+                                maximumTemperature.value =
+                                    result.body()?.daily?.temperature_2m_max?.get(0).toString()
+                                animationVisibility.targetState = true
+                                SaveToDatabase(
+                                    date,
+                                    minimumTemperature.value,
+                                    maximumTemperature.value
+                                )
+                            }
                         }
                     }
-                }
 
+                    if (currYear + 1 == askedYear) {
+                        if (currMonth < askedMonth || (currMonth == askedMonth && currDay < askedDay)) {
+                            Toast.makeText(
+                                context,
+                                "Sorry we can't show you prediction about this date, try earlier ones",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        } else {
+                            GlobalScope.launch {
+                                var minTempList = mutableListOf<Double>()
+                                var maxTempList = mutableListOf<Double>()
+                                var isdone = true
+                                for (i in 0..9) {
+                                    val result = async {
+                                        if (i == 0 && (askedDay <= currDay && askedDay >= currDay - 5) && currMonth == askedMonth) {
+                                            currWeatherApi.getWeatherStatus(
+                                                28.6519,
+                                                77.2315,
+                                                "temperature_2m_max",
+                                                "temperature_2m_min",
+                                                (currYear - i).toString() + date.substring(4),
+                                                (currYear - i).toString() + date.substring(4)
+                                            )
+                                        } else {
+                                            histWeatherApi.getWeatherStatus(
+                                                28.6519,
+                                                77.2315,
+                                                "temperature_2m_max",
+                                                "temperature_2m_min",
+                                                (currYear - i).toString() + date.substring(4),
+                                                (currYear - i).toString() + date.substring(4)
+                                            )
+                                        }
+                                    }.await()
+                                    Log.d(
+                                        "tatty",
+                                        result.body()?.daily?.temperature_2m_min?.get(0)
+                                            .toString()
+                                    )
+                                    if (result.isSuccessful) {
+                                        result.body()?.daily?.temperature_2m_min?.get(0)
+                                            ?.let { minTempList.add(it) }
+                                        result.body()?.daily?.temperature_2m_max?.get(0)
+                                            ?.let { maxTempList.add(it) }
+                                    } else {
+                                        isdone = false
+                                    }
+                                }
+                                if (isdone == true) {
+                                    minimumTemperature.value = minTempList.average().toString()
+                                    maximumTemperature.value = maxTempList.average().toString()
+                                    animationVisibility.targetState = true
+                                    SaveToDatabase(
+                                        date,
+                                        minimumTemperature.value,
+                                        maximumTemperature.value
+                                    )
+                                } else {
+                                    Toast.makeText(
+                                        context,
+                                        "Some Error Occurred",
+                                        Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            }
+                        }
+
+                    }
+                }
             }
 
         }) {
@@ -281,10 +395,47 @@ private fun getLocalDateFromMillis(millis: Long): String {
     val FormatObj = SimpleDateFormat("yyyy-MM-dd")
     return FormatObj.format(Date(millis))
 }
-
-
-@Preview
-@Composable
-fun DisplayGetWeatherInfoComponent(){
-    GetWeatherInfoComponent(Modifier)
+//citation:- https://www.youtube.com/watch?v=6Z_lTWKy1lg
+fun SaveToDatabase(date:String,temperature_MIN:String,temperature_MAX:String,){
+    GlobalScope.launch {
+        weatherDB.weatherDao().insertWeatherInfo(WeatherInfo(date,temperature_MIN,temperature_MAX))
+    }
 }
+
+//fun loadDataFromDatabase(date: String){
+//    GlobalScope.launch {
+//        var temp: WeatherInfo? = null
+//        temp = async {
+//            weatherDB.weatherDao().getWeatherInfoByDate(date)
+//        }.await()
+//
+//        setPreWeatherData(temp)
+//    }
+//}
+
+//fun setPreWeatherData(result: WeatherInfo){
+//    memory = result
+//}
+
+private fun checkNetworkConnectivity(context: Context): Boolean{
+    val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+    if(connectivityManager != null){
+        var networkConnections = connectivityManager.getNetworkCapabilities(connectivityManager.activeNetwork)
+        if(networkConnections != null){
+            if(networkConnections.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)){
+                return true
+            }else if(networkConnections.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)){
+                return true
+            }else if(networkConnections.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)){
+                return true
+            }
+        }
+
+    }
+    return false
+}
+//@Preview
+//@Composable
+//fun DisplayGetWeatherInfoComponent(){
+//    GetWeatherInfoComponent(Modifier)
+//}
